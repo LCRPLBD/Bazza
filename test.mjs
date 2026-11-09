@@ -16,8 +16,15 @@ assert.equal((await post('win',{id:1,won:true,name:'changed'},cookie)).status,40
 assert.equal((await post('win',{id:999,won:true},cookie)).status,400);
 assert.equal((await post('win',{id:1,won:true},cookie)).status,200);
 assert.equal((await(await fetch(url+'/api/state')).json()).cars[0].won,true);
+assert.equal((await post('review',{id:1,notes:'test'})).status,401);
+assert.equal((await post('review',{id:1,decision:'delete'},cookie)).status,400);
+assert.equal((await post('review',{id:1,notes:'x'.repeat(2001)},cookie)).status,400);
+assert.equal((await post('review',{id:1,notes:'Needs more grip',decision:'buff'},cookie)).status,200);
+assert.equal((await post('review',{id:1,decision:'keep'},cookie)).status,200);
+let reviewed=(await(await fetch(url+'/api/state')).json()).cars[0];assert.equal(reviewed.notes,'Needs more grip');assert.equal(reviewed.decision,'keep');
 await post('logout',{},cookie);assert.equal((await post('win',{id:1,won:false},cookie)).status,401);
 await stop();await start();assert.equal((await(await fetch(url+'/api/state')).json()).cars[0].won,true);
-console.log('PASS: data integrity, authentication, authorization, origin checks, persistence and logout.');
+let restored=(await(await fetch(url+'/api/state')).json()).cars[0];assert.equal(restored.notes,'Needs more grip');assert.equal(restored.decision,'keep');
+console.log('PASS: review authorization, validation, partial updates, persistence; data integrity, authentication, authorization, origin checks, persistence and logout.');
 }finally{await stop();rmSync(dir,{recursive:true,force:true});}
 
