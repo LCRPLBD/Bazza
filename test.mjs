@@ -5,7 +5,12 @@ async function stop(){if(child){child.kill();await new Promise(r=>child.once('ex
 async function post(path,data,cookie,origin=url){return fetch(url+'/api/'+path,{method:'POST',headers:{'Content-Type':'application/json',Origin:origin,...cookie?{Cookie:cookie}:{}},body:JSON.stringify(data)});}
 try{await start();let state=await(await fetch(url+'/api/state')).json();assert.equal(state.cars.length,102);assert.equal(state.cars.filter(x=>x.won).length,3);assert.deepEqual(state.cars.filter(x=>x.won).map(x=>x.name),['Evo','c8','812']);assert.equal((await post('win',{id:1,won:true})).status,401);
 assert.equal((await post('login',{username:'Bazza',password:'wrong'})).status,401);
-const login=await post('login',{username:'Bazza',password:'test-only-password'});assert.equal(login.status,200);const cookie=login.headers.get('set-cookie').split(';')[0];assert.ok(login.headers.get('set-cookie').includes('HttpOnly'));
+const proxyRequest=(origin,site)=>fetch(url+'/api/login',{method:'POST',headers:{'Content-Type':'application/json',Origin:origin,'Sec-Fetch-Site':site},body:JSON.stringify({username:'Bazza',password:'test-only-password'})});
+assert.equal((await proxyRequest('https://bazza.example','same-origin')).status,200);
+assert.equal((await proxyRequest('https://evil.example','cross-site')).status,403);
+assert.equal((await proxyRequest(url,'same-site')).status,403);
+assert.equal((await proxyRequest('null','same-origin')).status,403);
+const login=await post('login',{username:'Bazza',password:'test-only-password'},undefined,url+'/');assert.equal(login.status,200);const cookie=login.headers.get('set-cookie').split(';')[0];assert.ok(login.headers.get('set-cookie').includes('HttpOnly'));
 assert.equal((await post('win',{id:1,won:true},cookie,'https://evil.example')).status,403);
 assert.equal((await post('win',{id:1,won:true,name:'changed'},cookie)).status,400);
 assert.equal((await post('win',{id:999,won:true},cookie)).status,400);
@@ -15,3 +20,4 @@ await post('logout',{},cookie);assert.equal((await post('win',{id:1,won:false},c
 await stop();await start();assert.equal((await(await fetch(url+'/api/state')).json()).cars[0].won,true);
 console.log('PASS: data integrity, authentication, authorization, origin checks, persistence and logout.');
 }finally{await stop();rmSync(dir,{recursive:true,force:true});}
+
