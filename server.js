@@ -26,9 +26,22 @@ const logged=!!token&&(sessions.get(token)||0)>Date.now();
 if(req.method==='GET'&&path==='/health')return reply(res,200,{ok:true});
 if(req.method==='GET'&&path==='/api/state')return reply(res,200,{logged,cars:seed.map(c=>({...c,won:!!wins[c.id]}))});
 if(req.method==='POST'){
-const origin=req.headers.origin;
-const expected=process.env.APP_ORIGIN||((process.env.NODE_ENV==='production'?'https':'http')+'://'+req.headers.host);
-if(!origin||origin!==expected)return reply(res,403,{error:'Invalid request origin.'});
+const normalizeOrigin=value=>{
+try{const u=new URL(value.trim());return ['https:','http:'].includes(u.protocol)&&!u.username&&!u.password?u.origin:null;}catch{return null;}
+};
+const origin=typeof req.headers.origin==='string'?normalizeOrigin(req.headers.origin):null;
+const site=req.headers['sec-fetch-site'];
+// Browser-controlled Fetch Metadata survives reverse proxies without relying on
+// their internal Host. Other websites cannot forge this header in browser JS.
+const browserSameOrigin=site==='same-origin';
+const allowed=[
+process.env.APP_ORIGIN,
+process.env.RAILWAY_PUBLIC_DOMAIN?'https://'+process.env.RAILWAY_PUBLIC_DOMAIN:null,
+!process.env.APP_ORIGIN&&!process.env.RAILWAY_PUBLIC_DOMAIN
+?((process.env.NODE_ENV==='production'?'https':'http')+'://'+req.headers.host):null
+].filter(Boolean).map(normalizeOrigin).filter(Boolean);
+if(!origin||(site&&site!=='same-origin')||(!browserSameOrigin&&!allowed.includes(origin)))
+return reply(res,403,{error:'Invalid request origin. Open the site directly in your browser and try again.'});
 if(path==='/api/login'){
 // Global bounded attempt limit supplements the per-address limit, including proxy spoofing attempts.
 const ip=req.socket.remoteAddress||'unknown';
@@ -61,3 +74,5 @@ reply(res,404,{error:'Not found'});
 });
 setInterval(()=>{for(const [k,v]of sessions)if(v<Date.now())sessions.delete(k);for(const[k,v]of attempts)if(v.every(t=>Date.now()-t>600000))attempts.delete(k)},60000).unref();
 server.listen(Number(process.env.PORT||3000),'0.0.0.0');
+
+
