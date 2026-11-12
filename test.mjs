@@ -22,9 +22,31 @@ assert.equal((await post('review',{id:1,notes:'x'.repeat(2001)},cookie)).status,
 assert.equal((await post('review',{id:1,notes:'Needs more grip',decision:'buff'},cookie)).status,200);
 assert.equal((await post('review',{id:1,decision:'keep'},cookie)).status,200);
 let reviewed=(await(await fetch(url+'/api/state')).json()).cars[0];assert.equal(reviewed.notes,'Needs more grip');assert.equal(reviewed.decision,'keep');
+
+const before=(await(await fetch(url+'/api/state')).json()).cars;
+assert.equal((await post('cars/add',{name:'Test',category:'S1'})).status,401);
+assert.equal((await post('cars/delete',{id:1})).status,401);
+assert.equal((await post('cars/add',{name:' ',category:'S1'},cookie)).status,400);
+assert.equal((await post('cars/add',{name:'Test',category:'bad'},cookie)).status,400);
+assert.equal((await post('cars/add',{name:'Test',category:'S1'},cookie,'https://evil.example')).status,403);
+const added=await post('cars/add',{name:' r8 ',category:'S2'},cookie);assert.equal(added.status,201);
+const car=(await added.json()).car;assert.equal(car.id,103);assert.equal(car.name,'r8');assert.equal(car.won,false);
+assert.deepEqual((await(await fetch(url+'/api/state')).json()).cars.slice(0,102),before);
+assert.equal((await post('win',{id:car.id,won:true},cookie)).status,200);
+assert.equal((await post('review',{id:car.id,notes:'Added car note',decision:'nerf'},cookie)).status,200);
+assert.equal((await post('cars/delete',{id:car.id},cookie)).status,200);
+assert.equal((await post('cars/delete',{id:car.id},cookie)).status,404);
+assert.equal((await post('win',{id:car.id,won:false},cookie)).status,400);
+const second=(await(await post('cars/add',{name:'Second',category:'drift'},cookie)).json()).car;
+assert.equal(second.id,104);
+assert.deepEqual((await(await fetch(url+'/api/state')).json()).cars.slice(0,102),before);
 await post('logout',{},cookie);assert.equal((await post('win',{id:1,won:false},cookie)).status,401);
 await stop();await start();assert.equal((await(await fetch(url+'/api/state')).json()).cars[0].won,true);
 let restored=(await(await fetch(url+'/api/state')).json()).cars[0];assert.equal(restored.notes,'Needs more grip');assert.equal(restored.decision,'keep');
-console.log('PASS: review authorization, validation, partial updates, persistence; data integrity, authentication, authorization, origin checks, persistence and logout.');
+
+const final=(await(await fetch(url+'/api/state')).json()).cars;
+assert.equal(final.length,103);assert.equal(final.some(c=>c.id===103),false);assert.equal(final.at(-1).id,104);
+assert.deepEqual(final.slice(0,102),before);
+console.log('PASS: add/delete authorization, validation, stable IDs, existing records preserved, restart persistence; review authorization, validation, partial updates, persistence; data integrity, authentication, authorization, origin checks, persistence and logout.');
 }finally{await stop();rmSync(dir,{recursive:true,force:true});}
 

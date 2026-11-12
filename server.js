@@ -8,6 +8,12 @@ const file=join(dir,'wins.json');
 let wins=existsSync(file)?JSON.parse(readFileSync(file)):Object.fromEntries(seed.map(c=>[c.id,c.won]));
 const reviewsFile=join(dir,'reviews.json');
 let reviews=existsSync(reviewsFile)?JSON.parse(readFileSync(reviewsFile)): {};
+// Store roster changes separately; never reseed existing wins or reviews.
+const rosterFile=join(dir,'roster.json');
+let roster=existsSync(rosterFile)?JSON.parse(readFileSync(rosterFile)):{nextId:Math.max(...seed.map(c=>c.id))+1,added:[],deleted:[]};
+const classes=['D','C','B','A','S1','S2','X','drift'];
+const activeCars=()=>[...seed,...roster.added].filter(c=>!roster.deleted.includes(c.id));
+function saveRoster(next){writeFileSync(rosterFile+'.tmp',JSON.stringify(next));renameSync(rosterFile+'.tmp',rosterFile);roster=next;}
 const password=process.env.EDITOR_PASSWORD;
 if(!password)throw Error('Set EDITOR_PASSWORD before starting.');
 const salt=randomBytes(32),passwordHash=scryptSync(password,salt,64);
@@ -26,7 +32,7 @@ const path=new URL(req.url,'http://localhost').pathname;
 const token=(req.headers.cookie||'').split(';').map(x=>x.trim()).find(x=>x.startsWith('bazza_session='))?.slice(14);
 const logged=!!token&&(sessions.get(token)||0)>Date.now();
 if(req.method==='GET'&&path==='/health')return reply(res,200,{ok:true});
-if(req.method==='GET'&&path==='/api/state')return reply(res,200,{logged,cars:seed.map(c=>({...c,won:!!wins[c.id],notes:reviews[c.id]?.notes||'',decision:reviews[c.id]?.decision||''}))});
+if(req.method==='GET'&&path==='/api/state')return reply(res,200,{logged,cars:activeCars().map(c=>({...c,won:!!wins[c.id],notes:reviews[c.id]?.notes||'',decision:reviews[c.id]?.decision||''}))});
 if(req.method==='POST'){
 const normalizeOrigin=value=>{
 try{const u=new URL(value.trim());return ['https:','http:'].includes(u.protocol)&&!u.username&&!u.password?u.origin:null;}catch{return null;}
@@ -59,10 +65,27 @@ res.setHeader('Set-Cookie','bazza_session='+session+'; HttpOnly; SameSite=Strict
 return reply(res,200,{ok:true});
 }
 if(path==='/api/logout'){sessions.delete(token);res.setHeader('Set-Cookie','bazza_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0'+(process.env.NODE_ENV==='production'?'; Secure':''));return reply(res,200,{ok:true});}
+if(path==='/api/cars/add'){
+if(!logged)return reply(res,401,{error:'Log in to add cars.'});
+const b=await body(req);
+if(typeof b.name!=='string'||!b.name.trim()||b.name.trim().length>100||!classes.includes(b.category)||Object.keys(b).some(k=>!['name','category'].includes(k)))return reply(res,400,{error:'Enter a car name (1–100 characters) and choose a valid class.'});
+const car={id:roster.nextId,name:b.name.trim(),category:b.category,won:false};
+saveRoster({...roster,nextId:roster.nextId+1,added:[...roster.added,car]});
+return reply(res,201,{car:{...car,notes:'',decision:''}});
+}
+if(path==='/api/cars/delete'){
+if(!logged)return reply(res,401,{error:'Log in to delete cars.'});
+const b=await body(req);
+if(!Number.isInteger(b.id)||Object.keys(b).some(k=>k!=='id'))return reply(res,400,{error:'Invalid car.'});
+if(!activeCars().some(c=>c.id===b.id))return reply(res,404,{error:'This car is no longer in the list. Refresh to see the current list.'});
+// Retain deleted entries and their win/review records for recovery.
+saveRoster({...roster,deleted:[...roster.deleted,b.id]});
+return reply(res,200,{ok:true});
+}
 if(path==='/api/review'){
 if(!logged)return reply(res,401,{error:'Log in to update car reviews.'});
 const b=await body(req);
-if(!Number.isInteger(b.id)||!seed.some(c=>c.id===b.id)||Object.keys(b).some(k=>!['id','notes','decision'].includes(k))||(!Object.hasOwn(b,'notes')&&!Object.hasOwn(b,'decision'))||(Object.hasOwn(b,'notes')&&(typeof b.notes!=='string'||b.notes.length>2000))||(Object.hasOwn(b,'decision')&&!['','nerf','buff','keep'].includes(b.decision)))return reply(res,400,{error:'Invalid car review.'});
+if(!Number.isInteger(b.id)||!activeCars().some(c=>c.id===b.id)||Object.keys(b).some(k=>!['id','notes','decision'].includes(k))||(!Object.hasOwn(b,'notes')&&!Object.hasOwn(b,'decision'))||(Object.hasOwn(b,'notes')&&(typeof b.notes!=='string'||b.notes.length>2000))||(Object.hasOwn(b,'decision')&&!['','nerf','buff','keep'].includes(b.decision)))return reply(res,400,{error:'Invalid car review.'});
 const next={...reviews,[b.id]:{...(reviews[b.id]||{}),...(Object.hasOwn(b,'notes')?{notes:b.notes}:{}),...(Object.hasOwn(b,'decision')?{decision:b.decision}:{})}};
 writeFileSync(reviewsFile+'.tmp',JSON.stringify(next));renameSync(reviewsFile+'.tmp',reviewsFile);reviews=next;
 return reply(res,200,{ok:true});
@@ -70,7 +93,7 @@ return reply(res,200,{ok:true});
 if(path==='/api/win'){
 if(!logged)return reply(res,401,{error:'Log in to update wins.'});
 const b=await body(req);
-if(!Number.isInteger(b.id)||!seed.some(c=>c.id===b.id)||typeof b.won!=='boolean'||Object.keys(b).some(k=>!['id','won'].includes(k)))return reply(res,400,{error:'Only a race win can be updated.'});
+if(!Number.isInteger(b.id)||!activeCars().some(c=>c.id===b.id)||typeof b.won!=='boolean'||Object.keys(b).some(k=>!['id','won'].includes(k)))return reply(res,400,{error:'Only a race win can be updated.'});
 const next={...wins,[b.id]:b.won};writeFileSync(file+'.tmp',JSON.stringify(next));renameSync(file+'.tmp',file);wins=next;
 return reply(res,200,{ok:true});
 }

@@ -6,6 +6,8 @@ const wins=cars.filter(c=>c.won).length,pct=Math.round(wins/cars.length*100)||0;
 $('total').textContent=cars.length;$('wins').textContent=wins;$('remaining').textContent=cars.length-wins;
 $('percent').innerHTML=pct+'<small>%</small>';$('dialWins').textContent=wins;document.querySelector('.dial').style.setProperty('--progress',pct+'%');
 $('driver').textContent=logged?'BAZZA':'SPECTATOR';$('accessHint').textContent=logged?'Win tracking unlocked':'Log in to record your wins';$('loginButton').textContent=logged?'Log out · Bazza':'↗ Driver login';
+$('carManagement').hidden=!logged;
+$('addCarForm').querySelectorAll('input,select,button').forEach(el=>el.disabled=busy);
 const search=$('search').value.toLowerCase(),category=$('category').value;
 const visible=cars.filter(c=>(c.name+' '+(c.notes||'')).toLowerCase().includes(search)&&(category==='all'||c.category===category)&&($('decisionFilter').value==='all'||($('decisionFilter').value==='unreviewed'?!c.decision:c.decision===$('decisionFilter').value))&&(filter==='all'||(filter==='won'?c.won:!c.won)));
 $('count').textContent=visible.length+' / '+cars.length;$('empty').hidden=visible.length!==0;
@@ -27,7 +29,14 @@ save.onclick=async()=>{const value=notes.value;busy=true;render();$('saveStatus'
 notesWrap.append(notes,save);
 const decisions=document.createElement('div');decisions.className='decisions';decisions.setAttribute('role','group');decisions.setAttribute('aria-label','Balance decision for '+c.name+' entry '+c.id);
 for(const value of ['nerf','buff','keep']){const b=document.createElement('button');b.className='decision '+value+(c.decision===value?' active':'');b.textContent=value[0].toUpperCase()+value.slice(1);b.setAttribute('aria-pressed',String(c.decision===value));b.disabled=!logged||busy;b.title='Click again to clear';b.onclick=async()=>{const next=c.decision===value?'':value;busy=true;render();try{await api('review',{id:c.id,decision:next});c.decision=next;$('saveStatus').textContent='✓ Decision saved';}catch(e){$('saveStatus').textContent=e.message;}finally{busy=false;render();}};decisions.append(b);}
-row.append(main,badge,toggle,notesWrap,decisions);return row;
+const actions=document.createElement('div');actions.className='car-actions';actions.append(decisions);
+const remove=document.createElement('button');remove.className='delete-car';remove.textContent='Delete car';remove.hidden=!logged;remove.disabled=busy;remove.setAttribute('aria-label','Delete '+c.name+' entry '+c.id);
+remove.onclick=async()=>{
+if(!confirm('Delete '+c.name+' (entry '+c.id+', '+c.category.toUpperCase()+') from the list?'+(drafts.has(c.id)?' This car has an unsaved note that will be discarded.':'')+' Other cars and their progress will stay unchanged.'))return;
+busy=true;render();try{await api('cars/delete',{id:c.id});cars=cars.filter(x=>x.id!==c.id);drafts.delete(c.id);$('saveStatus').textContent='✓ '+c.name+' deleted';}catch(e){$('saveStatus').textContent=e.message;}finally{busy=false;render();}
+};
+actions.append(remove);
+row.append(main,badge,toggle,notesWrap,actions);return row;
 }));
 }
 async function refresh(){try{const s=await api('state');cars=s.cars;logged=s.logged;render();$('saveStatus').textContent=logged?'✓ Progress synced':'Viewing Bazza’s progress · Login to edit';}catch(e){$('saveStatus').textContent='Could not load progress. Refresh to retry.';}}
@@ -44,4 +53,13 @@ const rows=cars.filter(c=>pick==='all'||(pick==='unreviewed'?!c.decision:c.decis
 const quote=v=>'"'+String(v??'').replaceAll('"','""')+'"';
 const csv=[['Entry','Car','Class','Won','Decision','Notes'],...rows.map(c=>[c.id,c.name,c.category,c.won?'Yes':'No',c.decision||'Unreviewed',c.notes||''])].map(row=>row.map(v=>quote(/^[=+@\-\t\r]/.test(String(v))?"'"+v:v)).join(',')).join('\r\n');
 const url=URL.createObjectURL(new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8'}));const link=document.createElement('a');link.href=url;link.download='bazza-'+pick+'-list.csv';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+};
+
+$('addCarForm').onsubmit=async e=>{
+e.preventDefault();if(busy||!logged)return;
+const name=$('newCarName').value.trim(),category=$('newCarClass').value;
+if(!name){$('addCarStatus').textContent='Enter a car name.';return;}
+busy=true;render();$('addCarStatus').textContent='Adding car…';
+try{const result=await api('cars/add',{name,category});cars.push(result.car);$('newCarName').value='';$('addCarStatus').textContent='✓ '+result.car.name+' added to '+category.toUpperCase()+'.';$('saveStatus').textContent='✓ Car saved';}
+catch(e){$('addCarStatus').textContent=e.message;}finally{busy=false;render();}
 };
